@@ -69,6 +69,10 @@ CONFIG = {
     "database_url": os.environ.get("DATABASE_URL", ""),
 }
 
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+if not TELEGRAM_BOT_TOKEN:
+    logger.warning("TELEGRAM_BOT_TOKEN is not set; falling back to the bot token saved in panel settings (if any).")
+
 if HAS_POSTGRES:
     ADDRESS_INTEGRITY_ERRORS = (aiosqlite.IntegrityError, asyncpg.exceptions.UniqueViolationError)
 else:
@@ -547,6 +551,13 @@ async def auto_disable_expired_links():
         except Exception as e:
             logger.error(f"auto_disable_expired_links error: {e}", exc_info=True)
 
+async def get_telegram_token() -> str:
+    """Return the bot token from the TELEGRAM_BOT_TOKEN env var, falling back to the panel setting."""
+    if TELEGRAM_BOT_TOKEN:
+        return TELEGRAM_BOT_TOKEN
+    row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_bot_token'", "SELECT value FROM settings WHERE key = 'tg_bot_token'")
+    return row["value"] if row and row["value"] else ""
+
 async def telegram_reporter():
     while True:
         interval_hours = 1
@@ -559,9 +570,9 @@ async def telegram_reporter():
         if en_row and en_row["value"] != "1":
             continue
         try:
-            token_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_bot_token'", "SELECT value FROM settings WHERE key = 'tg_bot_token'")
+            bot_token = await get_telegram_token()
             chat_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_chat_id'", "SELECT value FROM settings WHERE key = 'tg_chat_id'")
-            if token_row and chat_row and token_row["value"] and chat_row["value"]:
+            if bot_token and chat_row and chat_row["value"]:
                 msg = (
                     f"📊 SulgX Panel Stats\n"
                     f"🕒 Uptime: {uptime()}\n"
@@ -570,7 +581,7 @@ async def telegram_reporter():
                     f"📡 Requests: {stats['total_requests']}\n"
                     f"❌ Errors: {stats['total_errors']}"
                 )
-                url = f"https://api.telegram.org/bot{token_row['value']}/sendMessage"
+                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     await client.post(url, json={"chat_id": chat_row["value"], "text": msg})
         except Exception:
@@ -748,9 +759,9 @@ async def notify_telegram_login(ip: str, ua: str):
     notif_row = await db_fetchone("SELECT value FROM settings WHERE key='telegram_notify_enabled'", "SELECT value FROM settings WHERE key='telegram_notify_enabled'")
     if notif_row and notif_row["value"] != "1":
         return
-    token_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_bot_token'", "SELECT value FROM settings WHERE key = 'tg_bot_token'")
+    bot_token = await get_telegram_token()
     chat_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_chat_id'", "SELECT value FROM settings WHERE key = 'tg_chat_id'")
-    if not token_row or not chat_row or not token_row["value"] or not chat_row["value"]:
+    if not bot_token or not chat_row or not chat_row["value"]:
         return
     lang = 'en'
     lang_row = await db_fetchone("SELECT value FROM settings WHERE key='telegram_lang'", "SELECT value FROM settings WHERE key='telegram_lang'")
@@ -771,7 +782,7 @@ async def notify_telegram_login(ip: str, ua: str):
     msg = msg.replace("{ip}", ip).replace("{ua}", ua).replace("{time}", now_str)
     panel_url = f"https://{get_domain()}/panel"
     msg += f'\n\n<a href="{panel_url}">Open SulgX Panel</a>'
-    url = f"https://api.telegram.org/bot{token_row['value']}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(url, json={"chat_id": chat_row["value"], "text": msg, "parse_mode": "HTML"})
@@ -1804,9 +1815,9 @@ async def notify_telegram_event(event: str, label: str, uid: str):
     notif_row = await db_fetchone("SELECT value FROM settings WHERE key='telegram_notify_enabled'", "SELECT value FROM settings WHERE key='telegram_notify_enabled'")
     if notif_row and notif_row["value"] != "1":
         return
-    token_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_bot_token'", "SELECT value FROM settings WHERE key = 'tg_bot_token'")
+    bot_token = await get_telegram_token()
     chat_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_chat_id'", "SELECT value FROM settings WHERE key = 'tg_chat_id'")
-    if not token_row or not chat_row or not token_row["value"] or not chat_row["value"]:
+    if not bot_token or not chat_row or not chat_row["value"]:
         return
     lang = 'en'
     lang_row = await db_fetchone("SELECT value FROM settings WHERE key='telegram_lang'", "SELECT value FROM settings WHERE key='telegram_lang'")
@@ -1826,7 +1837,7 @@ async def notify_telegram_event(event: str, label: str, uid: str):
     msg = msg.replace("{label}", label).replace("{uid}", uid)
     panel_url = f"https://{get_domain()}/panel"
     msg += f'\n\n<a href="{panel_url}">Open SulgX Panel</a>'
-    url = f"https://api.telegram.org/bot{token_row['value']}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(url, json={"chat_id": chat_row["value"], "text": msg, "parse_mode": "HTML"})
